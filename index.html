@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>世界街景 · World Street View</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: rgba(15, 23, 42, 0.92);
+      --line: rgba(148, 163, 184, 0.25);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent2: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+    header {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+      padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); backdrop-filter: blur(10px);
+      z-index: 1000;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.02em; }
+    .brand span { color: var(--accent); }
+    .brand small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    input[type="search"] {
+      width: min(320px, 70vw); padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+      background: #0f172a; color: var(--text); outline: none;
+    }
+    input[type="search"]:focus { border-color: var(--accent); }
+    button, .chip {
+      border: 1px solid var(--line); background: #111827; color: var(--text); border-radius: 999px;
+      padding: 8px 12px; cursor: pointer; font-size: 13px;
+    }
+    button.primary { background: linear-gradient(135deg, #0ea5e9, #22c55e); border: none; color: #041016; font-weight: 700; }
+    button:hover, .chip:hover { border-color: var(--accent); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    #main { display: grid; grid-template-columns: 1.05fr 1fr; min-height: 0; }
+    #map, #street { min-height: 0; height: 100%; background: #020617; }
+    #street { position: relative; border-left: 1px solid var(--line); }
+    #street iframe { width: 100%; height: 100%; border: 0; background: #000; }
+    #empty {
+      position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px;
+      color: var(--muted); background:
+        radial-gradient(circle at 30% 20%, rgba(56,189,248,0.12), transparent 40%),
+        radial-gradient(circle at 70% 80%, rgba(34,197,94,0.1), transparent 35%),
+        #020617;
+    }
+    #empty h2 { margin: 0 0 8px; color: var(--text); font-size: 22px; }
+    #status {
+      position: absolute; left: 12px; bottom: 12px; z-index: 500; background: var(--panel);
+      border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
+      max-width: min(420px, calc(100% - 24px));
+    }
+    @media (max-width: 900px) {
+      #main { grid-template-columns: 1fr; grid-template-rows: 45vh 55vh; }
+      #street { border-left: none; border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">
+        <div>
+          世界街景 <span>World Street View</span>
+          <small>点地图或选城市 · 右侧加载 Google 街景</small>
+        </div>
+      </div>
+      <div class="controls">
+        <input id="q" type="search" placeholder="搜索城市 / 地点，例如 东京塔" />
+        <button class="primary" id="goSearch">搜索</button>
+        <button id="openTab">新标签打开</button>
+        <div class="chips" id="chips"></div>
+      </div>
+    </header>
+    <div id="main">
+      <div id="map"></div>
+      <div id="street">
+        <div id="empty">
+          <div>
+            <h2>从左边点一下世界任意位置</h2>
+            <p>有街景覆盖的地方会在这里出现全景；没有覆盖时会尽量落到附近道路。</p>
+          </div>
+        </div>
+        <iframe id="sv" title="Street View" allowfullscreen loading="lazy" style="display:none"></iframe>
+      </div>
+    </div>
+    <div id="status">准备就绪 · 点击地图开始</div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const cities = [
+      { name: "香港", lat: 22.2819, lng: 114.1556 },
+      { name: "上海", lat: 31.2304, lng: 121.4737 },
+      { name: "北京", lat: 39.9042, lng: 116.4074 },
+      { name: "东京", lat: 35.6595, lng: 139.7005 },
+      { name: "首尔", lat: 37.5665, lng: 126.9780 },
+      { name: "新加坡", lat: 1.2834, lng: 103.8607 },
+      { name: "伦敦", lat: 51.5074, lng: -0.1278 },
+      { name: "巴黎", lat: 48.8584, lng: 2.2945 },
+      { name: "纽约", lat: 40.7580, lng: -73.9855 },
+      { name: "旧金山", lat: 37.8199, lng: -122.4783 },
+      { name: "悉尼", lat: -33.8568, lng: 151.2153 },
+      { name: "开罗", lat: 30.0444, lng: 31.2357 }
+    ];
+
+    const map = L.map("map", { worldCopyJump: true }).setView([20, 10], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    const marker = L.marker([22.2819, 114.1556]).addTo(map);
+    let current = { lat: 22.2819, lng: 114.1556 };
+
+    const chips = document.getElementById("chips");
+    cities.forEach((c) => {
+      const b = document.createElement("button");
+      b.className = "chip";
+      b.textContent = c.name;
+      b.onclick = () => goTo(c.lat, c.lng, c.name);
+      chips.appendChild(b);
+    });
+
+    function streetUrl(lat, lng) {
+      // Google Maps street-view style embed (no API key). Coverage depends on Google.
+      return `https://maps.google.com/maps?q=&layer=c&cbll=${lat},${lng}&cbp=11,0,0,0,0&hl=zh-CN&output=svembed`;
+    }
+
+    function openUrl(lat, lng) {
+      return `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
+    }
+
+    function setStatus(text) {
+      document.getElementById("status").textContent = text;
+    }
+
+    function loadStreet(lat, lng, label) {
+      current = { lat, lng };
+      marker.setLatLng([lat, lng]);
+      const iframe = document.getElementById("sv");
+      const empty = document.getElementById("empty");
+      empty.style.display = "none";
+      iframe.style.display = "block";
+      iframe.src = streetUrl(lat, lng);
+      setStatus(`${label || "自定义位置"} · ${lat.toFixed(5)}, ${lng.toFixed(5)} · 若右侧空白，点「新标签打开」`);
+    }
+
+    function goTo(lat, lng, label) {
+      map.setView([lat, lng], Math.max(map.getZoom(), 16));
+      loadStreet(lat, lng, label);
+    }
+
+    map.on("click", (e) => {
+      goTo(e.latlng.lat, e.latlng.lng, "地图选点");
+    });
+
+    document.getElementById("openTab").onclick = () => {
+      window.open(openUrl(current.lat, current.lng), "_blank", "noopener");
+    };
+
+    async function search() {
+      const q = document.getElementById("q").value.trim();
+      if (!q) return;
+      setStatus("搜索中…");
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+        const res = await fetch(url, { headers: { "Accept-Language": "zh-CN" } });
+        const data = await res.json();
+        if (!data.length) {
+          setStatus("没找到这个地点，换个关键词试试");
+          return;
+        }
+        const { lat, lon, display_name } = data[0];
+        goTo(parseFloat(lat), parseFloat(lon), display_name.split(",")[0]);
+      } catch (err) {
+        setStatus("搜索失败，请稍后重试");
+      }
+    }
+
+    document.getElementById("goSearch").onclick = search;
+    document.getElementById("q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") search();
+    });
+
+    // Start with Hong Kong street view
+    goTo(22.2819, 114.1556, "香港中环");
+  </script>
+</body>
+</html>
